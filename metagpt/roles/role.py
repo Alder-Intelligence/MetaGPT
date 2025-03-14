@@ -596,3 +596,4 @@ class Role(SerializationMixin, ContextMixin, BaseModel):
 
 
 RoleContext.model_rebuild()
+Role.model_rebuild()
