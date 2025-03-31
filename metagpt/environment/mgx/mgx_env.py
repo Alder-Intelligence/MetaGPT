@@ -45,7 +45,8 @@ class MGXEnv(Environment, SerializationMixin):
             if self.is_public_chat:
                 self._publish_message(message)
 
-        elif publicer == tl.profile:
+
+        elif not tl or publicer == tl.profile:
             if message.send_to == {"no one"}:
                 # skip the dummy message from team leader
                 return True
