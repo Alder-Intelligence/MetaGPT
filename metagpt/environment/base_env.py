@@ -189,7 +189,7 @@ class Environment(ExtEnv):
                 role.put_message(message)
                 found = True
         if not found:
-            logger.warning(f"Message no recipients: {message.dump()}")
+            logger.warning(f"Message no recipients: sent_from ={message.sent_from}, cause_by={message.cause_by}, send_to={message.send_to}")
         self.history.add(message)  # For debug
 
         return True
