@@ -16,14 +16,22 @@ class SerpAPIWrapper(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     api_key: str
+    # params: dict = Field(
+    #     default_factory=lambda: {
+    #         "engine": "google",
+    #         "google_domain": "google.com",
+    #         "gl": "us",
+    #         "hl": "en",
+    #     }
+    # )
     params: dict = Field(
         default_factory=lambda: {
-            "engine": "google",
-            "google_domain": "google.com",
+            "engine": "bing",
+            "google_domain": "bing.com",
             "gl": "us",
             "hl": "en",
         }
-    )
+    ) 
     url: str = "https://serpapi.com/search"
     aiosession: Optional[aiohttp.ClientSession] = None
     proxy: Optional[str] = None
