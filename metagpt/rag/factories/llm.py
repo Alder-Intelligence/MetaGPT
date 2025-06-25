@@ -37,10 +37,17 @@ class RAGLLM(CustomLLM):
         context_window: int = -1,
         num_output: int = -1,
         model_name: str = "",
-        *args,
-        **kwargs
+        **data,
     ):
-        super().__init__(*args, **kwargs)
+        """Custom initialization to compute sensible defaults then delegate field validation to Pydantic.
+
+        The parent :class:`CustomLLM` (a Pydantic model) expects the declared fields to be provided when
+        ``super().__init__`` is invoked. Previously these values were assigned *after* the parent init which
+        caused a ``ValidationError`` because ``model_infer`` was missing. We now calculate the effective
+        values first and pass them explicitly so that validation succeeds.
+        """
+
+        # Derive defaults from MetaGPT config if the caller leaves them as the sentinel ``-1``/empty string.
         if context_window < 0:
             context_window = TOKEN_MAX.get(config.llm.model, DEFAULT_CONTEXT_WINDOW)
 
@@ -50,10 +57,14 @@ class RAGLLM(CustomLLM):
         if not model_name:
             model_name = config.llm.model
 
-        self.model_infer = model_infer
-        self.context_window = context_window
-        self.num_output = num_output
-        self.model_name = model_name
+        # Let Pydantic handle field assignment & validation.
+        super().__init__(
+            model_infer=model_infer,
+            context_window=context_window,
+            num_output=num_output,
+            model_name=model_name,
+            **data,
+        )
 
     @property
     def metadata(self) -> LLMMetadata:
@@ -80,5 +91,7 @@ class RAGLLM(CustomLLM):
 def get_rag_llm(model_infer: BaseLLM = None) -> RAGLLM:
     """Get llm that can be used by LlamaIndex."""
     from metagpt.llm import LLM
+    llm = LLM(config.llm)
+    print("llm:", llm)
 
-    return RAGLLM(model_infer=model_infer or LLM())
+    return RAGLLM(model_infer=model_infer or llm)
