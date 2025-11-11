@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 from metagpt.const import METAGPT_ROOT
 
 LLM_STREAM_QUEUE: ContextVar[asyncio.Queue] = ContextVar("llm-stream")
+LLM_STREAM_QUEUE_THINGKING: ContextVar[asyncio.Queue] = ContextVar("llm-stream-thinking")
 
 
 class ToolLogItem(BaseModel):
@@ -71,6 +72,21 @@ def log_llm_stream(msg):
     if queue:
         queue.put_nowait(msg)
     _llm_stream_log(msg)
+    
+
+def log_llm_stream_thinking(msg):
+    """
+    Logs a message to the LLM stream.
+
+    Args:
+        msg: The message to be logged.
+    """
+    queue = get_llm_stream_queue_thinking()
+    if queue:
+        queue.put_nowait(msg)
+    _llm_stream_log_thinking(msg)
+    
+
 
 
 def log_tool_output(output: ToolLogItem | list[ToolLogItem], tool_name: str = ""):
@@ -113,7 +129,7 @@ def set_human_input_func(func):
 
 
 _llm_stream_log = partial(print, end="")
-
+_llm_stream_log_thinking = partial(print, end="")   
 
 _tool_output_log = (
     lambda *args, **kwargs: None
@@ -144,10 +160,32 @@ def get_llm_stream_queue():
     """
     return LLM_STREAM_QUEUE.get(None)
 
+def create_llm_stream_queue_thinking():
+    """Creates a new LLM stream queue for thinking and sets it in the context variable.
+
+    Returns:
+        The newly created asyncio.Queue instance.
+    """
+    queue = asyncio.Queue()
+    LLM_STREAM_QUEUE_THINGKING.set(queue)
+    return queue
+
+def get_llm_stream_queue_thinking():
+    """Retrieves the current LLM stream queue for thinking from the context variable.
+
+    Returns:
+        The asyncio.Queue instance if set, otherwise None.
+    """
+    return LLM_STREAM_QUEUE_THINGKING.get(None)
+
 
 _get_human_input = input  # get human input from console by default
 
 
 def _llm_stream_log(msg):
+    if _print_level in ["INFO"]:
+        print(msg, end="")
+        
+def _llm_stream_log_thinking(msg):
     if _print_level in ["INFO"]:
         print(msg, end="")

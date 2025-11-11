@@ -38,8 +38,8 @@ async def lowlevel_api_example(llm: LLM):
 
 async def main():
     llm = LLM()
-    await ask_and_print("what's your name?", llm, "I'm a helpful AI assistant.")
-    await ask_and_print("who are you?", llm, "just answer 'I am a robot' if the question is 'who are you'")
+    await ask_and_print("what's your name?", llm, "I'm a helpful AI assistant. DO NOT provide any reasoning in your answer.")
+    await ask_and_print("who are you?", llm, "just answer 'I am a robot' if the question is 'who are you', otherwise, please reason about your answer and provide the reasoning in <think>...</think> tags.")
     await lowlevel_api_example(llm)
 
 

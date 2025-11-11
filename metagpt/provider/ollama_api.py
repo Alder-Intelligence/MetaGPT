@@ -3,12 +3,13 @@
 # @Desc   : self-host open llm model with ollama which isn't openai-api-compatible
 
 import json
+import re
 from enum import Enum, auto
 from typing import AsyncGenerator, Optional, Tuple
 
 from metagpt.configs.llm_config import LLMConfig, LLMType
 from metagpt.const import USE_CONFIG_TIMEOUT
-from metagpt.logs import log_llm_stream
+from metagpt.logs import log_llm_stream, log_llm_stream_thinking
 from metagpt.provider.base_llm import BaseLLM
 from metagpt.provider.general_api_requestor import GeneralAPIRequestor, OpenAIResponse
 from metagpt.provider.llm_provider_registry import register_provider
@@ -38,7 +39,24 @@ class OllamaMessageBase:
         raise NotImplementedError
 
     def decode(self, response: OpenAIResponse) -> dict:
-        return json.loads(response.data.decode("utf-8"))
+        text = response.data.decode("utf-8")
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            # Fallback for servers that return NDJSON concatenated content when stream=True
+            # Parse line by line and return the last complete JSON object
+            obj = None
+            for line in text.splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+            if obj is not None:
+                return obj
+            raise
 
     def get_choice(self, to_choice_dict: dict) -> str:
         raise NotImplementedError
@@ -219,10 +237,14 @@ class OllamaLLM(BaseLLM):
         return {"prompt_tokens": resp.get("prompt_eval_count", 0), "completion_tokens": resp.get("eval_count", 0)}
 
     async def _achat_completion(self, messages: list[dict], timeout: int = USE_CONFIG_TIMEOUT) -> dict:
+        payload = self.ollama_message.apply(messages=messages)
+        if isinstance(payload, dict):
+            # Force non-streaming payload to ensure a single JSON object response
+            payload["stream"] = False
         resp, _, _ = await self.client.arequest(
             method=self.http_method,
             url=self.ollama_message.api_suffix,
-            params=self.ollama_message.apply(messages=messages),
+            params=payload,
             request_timeout=self.get_timeout(timeout),
         )
         if isinstance(resp, AsyncGenerator):
@@ -233,16 +255,32 @@ class OllamaLLM(BaseLLM):
             raise ValueError
 
     def get_choice_text(self, rsp):
-        return self.ollama_message.get_choice(rsp)
+        # Prefer provider-specific reasoning fields if present
+        if isinstance(rsp, dict):
+            message = rsp.get("message")
+            if isinstance(message, dict):
+                thinking = message.get("thinking")
+                if thinking:
+                    self.reasoning_content = thinking
+
+        text = self.ollama_message.get_choice(rsp)
+        cleaned, reasoning = self._extract_reasoning(text)
+        if reasoning:
+            self.reasoning_content = reasoning
+        return cleaned
 
     async def acompletion(self, messages: list[dict], timeout=USE_CONFIG_TIMEOUT) -> dict:
         return await self._achat_completion(messages, timeout=self.get_timeout(timeout))
 
     async def _achat_completion_stream(self, messages: list[dict], timeout: int = USE_CONFIG_TIMEOUT) -> str:
+        payload = self.ollama_message.apply(messages=messages)
+        # Force streaming response at HTTP and payload levels
+        if isinstance(payload, dict):
+            payload["stream"] = True
         resp, _, _ = await self.client.arequest(
             method=self.http_method,
             url=self.ollama_message.api_suffix,
-            params=self.ollama_message.apply(messages=messages),
+            params=payload,
             request_timeout=self.get_timeout(timeout),
             stream=True,
         )
@@ -262,6 +300,7 @@ class OllamaLLM(BaseLLM):
     async def _processing_openai_response_async_generator(self, ag_openai_resp: AsyncGenerator[OpenAIResponse, None]):
         collected_content = []
         usage = {}
+        reasoning_chunks: list[str] = []
         async for raw_chunk in ag_openai_resp:
             chunk = self.ollama_message.decode(raw_chunk)
 
@@ -272,11 +311,54 @@ class OllamaLLM(BaseLLM):
             else:
                 # stream finished
                 usage = self.get_usage(chunk)
+            # capture provider-specific reasoning if present in any chunk
+            if isinstance(chunk, dict):
+                message = chunk.get("message")
+                if isinstance(message, dict):
+                    thinking = message.get("thinking")
+                    if thinking:
+                        reasoning_chunks.append(thinking)
+                        log_llm_stream_thinking(thinking)
         log_llm_stream("\n")
 
         self._update_costs(usage)
         full_content = "".join(collected_content)
-        return full_content
+        cleaned, reasoning = self._extract_reasoning(full_content)
+        if reasoning:
+            self.reasoning_content = reasoning
+        elif reasoning_chunks:
+            self.reasoning_content = "".join(reasoning_chunks).strip()
+        return cleaned
+
+    @staticmethod
+    def _extract_reasoning(text: str) -> tuple[str, Optional[str]]:
+        """Extract reasoning/thinking content from model output and return (cleaned, reasoning).
+
+        Heuristics:
+        - Prefer XML-like tags often used by reasoning models: <think>...</think>, <reasoning>...</reasoning>, <analysis>...</analysis>
+        - If multiple matches exist, concatenate them in order of appearance.
+        - Remove matched segments from the final answer.
+        """
+        if not text:
+            return text, None
+
+        patterns = [
+            re.compile(r"<think>([\s\S]*?)</think>", re.IGNORECASE),
+            re.compile(r"<reasoning>([\s\S]*?)</reasoning>", re.IGNORECASE),
+            re.compile(r"<analysis>([\s\S]*?)</analysis>", re.IGNORECASE),
+        ]
+
+        reasoning_parts: list[str] = []
+        cleaned = text
+        for pat in patterns:
+            matches = list(pat.finditer(cleaned))
+            if matches:
+                for m in matches:
+                    reasoning_parts.append(m.group(1).strip())
+                cleaned = pat.sub("", cleaned)
+
+        reasoning_text = "\n\n".join([p for p in reasoning_parts if p]) if reasoning_parts else None
+        return cleaned.strip(), reasoning_text
 
 
 @register_provider(LLMType.OLLAMA_GENERATE)
@@ -305,10 +387,14 @@ class OllamaEmbeddings(OllamaLLM):
         return "embedding"
 
     async def _achat_completion(self, messages: list[dict], timeout: int = USE_CONFIG_TIMEOUT) -> dict:
+        payload = self.ollama_message.apply(messages=messages)
+        # Force non-streaming response at HTTP and payload levels
+        if isinstance(payload, dict):
+            payload["stream"] = False
         resp, _, _ = await self.client.arequest(
             method=self.http_method,
             url=self.ollama_message.api_suffix,
-            params=self.ollama_message.apply(messages=messages),
+            params=payload,
             request_timeout=self.get_timeout(timeout),
         )
         return self.ollama_message.decode(resp)[self._llama_embedding_key]
