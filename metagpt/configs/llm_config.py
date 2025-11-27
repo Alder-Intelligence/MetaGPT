@@ -112,6 +112,9 @@ class LLMConfig(YamlModel):
     reasoning: bool = False
     reasoning_max_token: int = 4000  # reasoning budget tokens to generate, usually smaller than max_token
 
+    # For Ollama
+    keep_alive: Optional[int] = None  # Controls how long the model will stay loaded into memory (in seconds). Set to 0 to immediately unload.
+
     @field_validator("api_key")
     @classmethod
     def check_llm_key(cls, v):

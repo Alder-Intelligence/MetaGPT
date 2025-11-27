@@ -206,7 +206,10 @@ class OllamaLLM(BaseLLM):
 
     @property
     def _llama_api_kwargs(self) -> dict:
-        return {"options": {"temperature": 0.3}, "stream": self.config.stream}
+        kwargs = {"options": {"temperature": 0.3}, "stream": self.config.stream}
+        if self.config.keep_alive is not None:
+            kwargs["keep_alive"] = self.config.keep_alive
+        return kwargs
 
     def __init_ollama(self, config: LLMConfig):
         assert config.base_url, "ollama base url is required!"
@@ -287,7 +290,10 @@ class OllamaGenerate(OllamaLLM):
 
     @property
     def _llama_api_kwargs(self) -> dict:
-        return {"options": {"temperature": 0.3}, "stream": self.config.stream}
+        kwargs = {"options": {"temperature": 0.3}, "stream": self.config.stream}
+        if self.config.keep_alive is not None:
+            kwargs["keep_alive"] = self.config.keep_alive
+        return kwargs
 
 
 @register_provider(LLMType.OLLAMA_EMBEDDINGS)
@@ -298,7 +304,10 @@ class OllamaEmbeddings(OllamaLLM):
 
     @property
     def _llama_api_kwargs(self) -> dict:
-        return {"options": {"temperature": 0.3}}
+        kwargs = {"options": {"temperature": 0.3}}
+        if self.config.keep_alive is not None:
+            kwargs["keep_alive"] = self.config.keep_alive
+        return kwargs
 
     @property
     def _llama_embedding_key(self) -> str:
